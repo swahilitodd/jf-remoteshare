@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Remote Share</title>
+</head>
+<body>
+<div id="RemoteSharePage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <style>
+                #RemoteSharePage .rs-card { border: 1px solid rgba(128,128,128,.35); border-radius: 6px; padding: 1em 1.2em; margin: 0 0 1em; }
+                #RemoteSharePage .rs-row { display: flex; gap: .75em; align-items: center; flex-wrap: wrap; }
+                #RemoteSharePage .rs-muted { opacity: .7; font-size: .9em; }
+                #RemoteSharePage .rs-error { color: #e57373; }
+                #RemoteSharePage .rs-code { font-family: monospace; word-break: break-all; user-select: all; padding: .5em; background: rgba(128,128,128,.15); border-radius: 4px; margin: .5em 0; }
+                #RemoteSharePage .rs-lib { display: grid; grid-template-columns: auto 1fr; gap: .4em .8em; align-items: center; margin: .6em 0; }
+                #RemoteSharePage h2 { margin-top: 1.6em; }
+                #RemoteSharePage button.rs-small { padding: .3em .9em; margin: 0; }
+            </style>
+
+            <h1>Remote Share</h1>
+            <p class="rs-muted">Share libraries with other Jellyfin servers, and add libraries shared with you to this server.</p>
+
+            <!-- ================= Sharing out ================= -->
+            <h2>Share your libraries</h2>
+
+            <div class="inputContainer">
+                <input is="emby-input" type="url" id="rsHostPublicUrl" label="This server's public URL"
+                       placeholder="https://jellyfin.example.com">
+                <div class="fieldDescription">How other servers reach this one. It goes into every share code you create.</div>
+            </div>
+
+            <div class="rs-card">
+                <h3 style="margin-top:0">New share</h3>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="rsNewGuestName" label="Who is it for?" placeholder="Mike's server">
+                </div>
+                <div id="rsNewLibraries"></div>
+                <button is="emby-button" type="button" class="raised button-submit" id="rsCreateShare"><span>Create share code</span></button>
+                <div id="rsNewCode"></div>
+            </div>
+
+            <div id="rsHostShares"></div>
+
+            <!-- ================= Receiving ================= -->
+            <h2>Libraries shared with you</h2>
+
+            <div class="rs-card">
+                <h3 style="margin-top:0">Add a share</h3>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="rsJoinCode" label="Share code" placeholder="rs1.…">
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="rsJoinName" label="Friendly name" placeholder="Mike">
+                    <div class="fieldDescription">Added to the shared libraries' names, e.g. "Movies (Mike)", so they don't clash with yours. You can rename each library afterwards.</div>
+                </div>
+                <button is="emby-button" type="button" class="raised button-submit" id="rsJoin"><span>Add share</span></button>
+            </div>
+
+            <div id="rsGuestShares"></div>
+
+            <!-- ================= Advanced ================= -->
+            <h2>Advanced</h2>
+            <div class="inputContainer">
+                <input is="emby-input" type="url" id="rsGuestLocalUrl" label="This server's local URL">
+                <div class="fieldDescription">How this server reaches itself for playback of shared libraries. Include the base path if you use one.</div>
+            </div>
+            <div class="inputContainer">
+                <input is="emby-input" type="text" id="rsGuestStoragePath" label="Storage folder for shared libraries">
+                <div class="fieldDescription" id="rsStorageHint"></div>
+            </div>
+            <button is="emby-button" type="button" class="raised button-submit" id="rsSaveSettings"><span>Save</span></button>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+    (function () {
+        var page = document.querySelector('#RemoteSharePage');
+        var state = null;
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        function when(d) { return d ? new Date(d).toLocaleString() : 'never'; }
+
+        // ApiClient.fetch with dataType 'text' resolves to the body string and rejects with the Response on HTTP errors.
+        function call(method, path, body) {
+            return ApiClient.fetch({
+                type: method,
+                url: ApiClient.getUrl('RemoteShare/Admin/' + path),
+                data: body === undefined ? undefined : JSON.stringify(body),
+                contentType: 'application/json',
+                dataType: 'text'
+            }, true).then(function (text) {
+                return text ? JSON.parse(text) : null;
+            }, function (resp) {
+                if (resp && typeof resp.text === 'function') {
+                    return resp.text().then(function (t) {
+                        var msg = t;
+                        try { var j = JSON.parse(t); msg = typeof j === 'string' ? j : (j.title || j.detail || t); } catch (e) { /* plain text */ }
+                        throw new Error(msg || ('Request failed (' + resp.status + ')'));
+                    });
+                }
+                throw resp instanceof Error ? resp : new Error('Request failed');
+            });
+        }
+
+        function fail(e) { Dashboard.hideLoadingMsg(); Dashboard.alert({ title: 'Remote Share', message: e.message || String(e) }); }
+
+        function libraryChecks(selected) {
+            if (!state.Libraries.length) { return '<p class="rs-muted">No movie or TV libraries on this server.</p>'; }
+            return state.Libraries.map(function (l) {
+                return '<label class="emby-checkbox-label" style="display:block;margin:.3em 0"><input type="checkbox" is="emby-checkbox" data-lib="' + l.Id + '"' +
+                    (selected.indexOf(l.Id) >= 0 ? ' checked' : '') + '><span>' + esc(l.Name) + ' <span class="rs-muted">(' + esc(l.CollectionType) + ')</span></span></label>';
+            }).join('');
+        }
+
+        function checkedLibs(container) {
+            return Array.prototype.map.call(container.querySelectorAll('input[data-lib]:checked'), function (i) { return i.getAttribute('data-lib'); });
+        }
+
+        function renderHost() {
+            page.querySelector('#rsNewLibraries').innerHTML = '<p style="margin-bottom:.3em">Libraries to share:</p>' + libraryChecks([]);
+            var html = state.HostShares.length ? '' : '<p class="rs-muted">You aren\'t sharing with anyone yet.</p>';
+            state.HostShares.forEach(function (s) {
+                html += '<div class="rs-card" data-host="' + s.Id + '">' +
+                    '<div class="rs-row"><h3 style="margin:0;flex:1">' + esc(s.GuestName) + (s.Enabled ? '' : ' <span class="rs-muted">(paused)</span>') + '</h3>' +
+                    '<button is="emby-button" type="button" class="raised rs-small" data-act="toggle">' + (s.Enabled ? 'Pause' : 'Resume') + '</button>' +
+                    '<button is="emby-button" type="button" class="raised rs-small" data-act="revoke">Revoke</button></div>' +
+                    '<p class="rs-muted">Last connected: ' + when(s.LastSeenUtc) + '</p>' +
+                    '<div data-role="libs">' + libraryChecks(s.LibraryIds) + '</div>' +
+                    '<button is="emby-button" type="button" class="raised rs-small" data-act="save">Save libraries</button> ' +
+                    '<button is="emby-button" type="button" class="raised rs-small" data-act="code">Show share code</button>' +
+                    '<div data-role="code" hidden><div class="rs-code">' + esc(s.Code) + '</div></div>' +
+                    '</div>';
+            });
+            page.querySelector('#rsHostShares').innerHTML = html;
+        }
+
+        function renderGuest() {
+            var html = state.GuestShares.length ? '' : '<p class="rs-muted">Nothing has been shared with this server yet.</p>';
+            state.GuestShares.forEach(function (s) {
+                html += '<div class="rs-card" data-guest="' + s.Id + '">' +
+                    '<div class="rs-row"><div class="inputContainer" style="flex:1;margin:0"><input is="emby-input" type="text" data-role="friendly" label="Friendly name" value="' + esc(s.FriendlyName) + '"></div>' +
+                    '<button is="emby-button" type="button" class="raised rs-small" data-act="sync">Sync now</button>' +
+                    '<button is="emby-button" type="button" class="raised rs-small" data-act="leave">Remove</button></div>' +
+                    '<p class="rs-muted">From ' + esc(s.HostUrl) + ' · last synced ' + when(s.LastSyncUtc) + '</p>' +
+                    (s.LastSyncError ? '<p class="rs-error">' + esc(s.LastSyncError) + '</p>' : '');
+                if (!s.Libraries.length) {
+                    html += '<p class="rs-muted">The host isn\'t sharing any libraries with you right now.</p>';
+                }
+                s.Libraries.forEach(function (l) {
+                    html += '<div class="rs-lib" data-remote="' + l.RemoteId + '">' +
+                        '<label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" data-role="enabled"' + (l.Enabled ? ' checked' : '') + '><span></span></label>' +
+                        '<div><input is="emby-input" type="text" data-role="local" label="Library name on this server (shared as &quot;' + esc(l.RemoteName) + '&quot;)" value="' + esc(l.LocalName) + '">' +
+                        '<div class="rs-muted">' + esc(l.CollectionType) + (l.Enabled ? ' · ' + l.ItemCount + ' items' : ' · not added') + '</div></div>' +
+                        '</div>';
+                });
+                html += '<button is="emby-button" type="button" class="raised button-submit rs-small" data-act="save">Save</button></div>';
+            });
+            page.querySelector('#rsGuestShares').innerHTML = html;
+        }
+
+        function load() {
+            Dashboard.showLoadingMsg();
+            return call('GET', 'State').then(function (s) {
+                state = s;
+                page.querySelector('#rsHostPublicUrl').value = s.HostPublicUrl || '';
+                page.querySelector('#rsGuestLocalUrl').value = s.GuestLocalUrl || '';
+                page.querySelector('#rsGuestStoragePath').value = s.GuestStoragePath || '';
+                page.querySelector('#rsStorageHint').textContent = 'Leave empty for the default. Currently: ' + s.GuestStorageRoot;
+                renderHost();
+                renderGuest();
+                Dashboard.hideLoadingMsg();
+            }).catch(fail);
+        }
+
+        function saveSettings() {
+            return call('POST', 'Settings', {
+                HostPublicUrl: page.querySelector('#rsHostPublicUrl').value,
+                GuestLocalUrl: page.querySelector('#rsGuestLocalUrl').value,
+                GuestStoragePath: page.querySelector('#rsGuestStoragePath').value
+            });
+        }
+
+        page.querySelector('#rsSaveSettings').addEventListener('click', function () {
+            saveSettings().then(function () { Dashboard.processPluginConfigurationUpdateResult(); return load(); }).catch(fail);
+        });
+
+        page.querySelector('#rsCreateShare').addEventListener('click', function () {
+            var body = { GuestName: page.querySelector('#rsNewGuestName').value, LibraryIds: checkedLibs(page.querySelector('#rsNewLibraries')) };
+            saveSettings().then(function () { return call('POST', 'HostShares', body); }).then(function (r) {
+                page.querySelector('#rsNewGuestName').value = '';
+                return load().then(function () {
+                    page.querySelector('#rsNewCode').innerHTML = '<p>Send this code to ' + esc(body.GuestName) + '. Anyone with it can stream the chosen libraries, so share it privately.</p><div class="rs-code">' + esc(r.Code) + '</div>';
+                });
+            }).catch(fail);
+        });
+
+        page.querySelector('#rsHostShares').addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-act]');
+            if (!btn) { return; }
+            var card = btn.closest('[data-host]');
+            var id = card.getAttribute('data-host');
+            var share = state.HostShares.find(function (s) { return s.Id === id; });
+            var act = btn.getAttribute('data-act');
+            if (act === 'code') { var c = card.querySelector('[data-role=code]'); c.hidden = !c.hidden; return; }
+            if (act === 'revoke') {
+                if (!confirm('Revoke ' + share.GuestName + '\'s access? Their copies of your libraries stop working.')) { return; }
+                call('DELETE', 'HostShares/' + id).then(load).catch(fail);
+                return;
+            }
+            var body = { GuestName: share.GuestName, LibraryIds: checkedLibs(card.querySelector('[data-role=libs]')), Enabled: act === 'toggle' ? !share.Enabled : share.Enabled };
+            call('PUT', 'HostShares/' + id, body).then(load).catch(fail);
+        });
+
+        page.querySelector('#rsJoin').addEventListener('click', function () {
+            Dashboard.showLoadingMsg();
+            call('POST', 'GuestShares', { Code: page.querySelector('#rsJoinCode').value, FriendlyName: page.querySelector('#rsJoinName').value }).then(function () {
+                page.querySelector('#rsJoinCode').value = '';
+                page.querySelector('#rsJoinName').value = '';
+                Dashboard.alert({ title: 'Remote Share', message: 'Share added. Its libraries appear after the first sync and library scan finish.' });
+                return load();
+            }).catch(fail);
+        });
+
+        page.querySelector('#rsGuestShares').addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-act]');
+            if (!btn) { return; }
+            var card = btn.closest('[data-guest]');
+            var id = card.getAttribute('data-guest');
+            var act = btn.getAttribute('data-act');
+            if (act === 'sync') {
+                call('POST', 'GuestShares/' + id + '/Sync').then(function () {
+                    Dashboard.alert({ title: 'Remote Share', message: 'Sync started. Refresh this page in a moment to see the result.' });
+                }).catch(fail);
+                return;
+            }
+            if (act === 'leave') {
+                if (!confirm('Remove this share and its libraries from this server?')) { return; }
+                Dashboard.showLoadingMsg();
+                call('DELETE', 'GuestShares/' + id).then(load).catch(fail);
+                return;
+            }
+            var body = {
+                FriendlyName: card.querySelector('[data-role=friendly]').value,
+                Libraries: Array.prototype.map.call(card.querySelectorAll('[data-remote]'), function (row) {
+                    return {
+                        RemoteId: row.getAttribute('data-remote'),
+                        LocalName: row.querySelector('[data-role=local]').value,
+                        Enabled: row.querySelector('[data-role=enabled]').checked
+                    };
+                })
+            };
+            call('PUT', 'GuestShares/' + id, body).then(function () {
+                Dashboard.alert({ title: 'Remote Share', message: 'Saved. Library changes apply when the sync finishes.' });
+                return load();
+            }).catch(fail);
+        });
+
+        page.addEventListener('pageshow', load);
+    })();
+    </script>
+</div>
+</body>
+</html>
