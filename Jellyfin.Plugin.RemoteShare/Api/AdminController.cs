@@ -68,16 +68,27 @@ public class AdminController : ControllerBase
     [HttpPost("Settings")]
     public ActionResult Settings([FromBody] SettingsRequest req)
     {
+        string? hostPublicUrl, guestLocalUrl;
+        try
+        {
+            hostPublicUrl = ServerUrl.Normalize(req.HostPublicUrl);
+            guestLocalUrl = ServerUrl.Normalize(req.GuestLocalUrl);
+        }
+        catch (FormatException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
         P.Update(c =>
         {
             if (req.HostPublicUrl is not null)
             {
-                c.HostPublicUrl = req.HostPublicUrl.Trim().TrimEnd('/');
+                c.HostPublicUrl = hostPublicUrl ?? string.Empty;
             }
 
-            if (!string.IsNullOrWhiteSpace(req.GuestLocalUrl))
+            if (guestLocalUrl is not null)
             {
-                c.GuestLocalUrl = req.GuestLocalUrl.Trim().TrimEnd('/');
+                c.GuestLocalUrl = guestLocalUrl;
             }
 
             if (req.GuestStoragePath is not null)
@@ -160,6 +171,8 @@ public class AdminController : ControllerBase
         public string Code { get; set; } = string.Empty;
 
         public string FriendlyName { get; set; } = string.Empty;
+
+        public bool TrustCertificate { get; set; }
     }
 
     [HttpPost("GuestShares")]
@@ -167,7 +180,7 @@ public class AdminController : ControllerBase
     {
         try
         {
-            var share = await _guest.JoinAsync(req.Code, req.FriendlyName, ct).ConfigureAwait(false);
+            var share = await _guest.JoinAsync(req.Code, req.FriendlyName, req.TrustCertificate, ct).ConfigureAwait(false);
             _ = Task.Run(() => _guest.SyncAsync(share.Id, CancellationToken.None), CancellationToken.None);
             return new { share.Id };
         }

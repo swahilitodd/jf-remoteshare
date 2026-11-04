@@ -49,7 +49,7 @@ public class RelayController : ControllerBase
         }
 
         var method = HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get;
-        using var upstream = HostClient.NewRequest(method, share.HostUrl, share.Token, $"RemoteShare/Host/Items/{itemId:N}/Stream");
+        using var upstream = HostClient.NewRequest(method, share, $"RemoteShare/Host/Items/{itemId:N}/Stream");
         foreach (var header in new[] { "Range", "If-Range", "If-None-Match", "If-Modified-Since" })
         {
             if (Request.Headers.TryGetValue(header, out var value))
@@ -61,11 +61,10 @@ public class RelayController : ControllerBase
         HttpResponseMessage response;
         try
         {
-            response = await _client.StreamingClient()
-                .SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted)
+            response = await HostClient.SendAsync(_client.StreamingClient(), upstream, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted)
                 .ConfigureAwait(false);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException or HostAccessException)
         {
             _logger.LogWarning(ex, "Remote Share relay could not reach {Host}", share.HostUrl);
             Response.StatusCode = StatusCodes.Status502BadGateway;

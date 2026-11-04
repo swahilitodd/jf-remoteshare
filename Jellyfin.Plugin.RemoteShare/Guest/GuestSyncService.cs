@@ -32,7 +32,7 @@ public class GuestSyncService
         string.IsNullOrWhiteSpace(friendlyName) ? remoteName : $"{remoteName} ({friendlyName.Trim()})";
 
     /// <summary>Validates a share code against the host and saves the share. Does not sync.</summary>
-    public async Task<GuestShare> JoinAsync(string code, string friendlyName, CancellationToken ct)
+    public async Task<GuestShare> JoinAsync(string code, string friendlyName, bool trustCertificate, CancellationToken ct)
     {
         var parsed = ShareCode.Decode(code);
         if (P.Configuration.GuestShares.Any(s => s.HostUrl == parsed.HostUrl && s.Token == parsed.Token))
@@ -40,7 +40,6 @@ public class GuestSyncService
             throw new InvalidOperationException("You've already joined this share.");
         }
 
-        var libraries = await _client.GetLibrariesAsync(parsed.HostUrl, parsed.Token, ct).ConfigureAwait(false);
         var share = new GuestShare
         {
             FriendlyName = string.IsNullOrWhiteSpace(friendlyName) ? new Uri(parsed.HostUrl).Host : friendlyName.Trim(),
@@ -48,6 +47,9 @@ public class GuestSyncService
             Token = parsed.Token,
             RelayKey = HostService.NewSecret(),
         };
+        var libraries = trustCertificate
+            ? await _client.GetLibrariesTrustingCertificateAsync(share, ct).ConfigureAwait(false)
+            : await _client.GetLibrariesAsync(share, ct).ConfigureAwait(false);
         share.Libraries = libraries.Select(l => NewGuestLibrary(l, share.FriendlyName)).ToList();
         EnsureUniqueNames(share, P.Configuration.GuestShares);
 
@@ -171,7 +173,7 @@ public class GuestSyncService
     private async Task SyncCoreAsync(GuestShare share, CancellationToken ct)
     {
         // Refresh the host's library list: pick up newly shared libraries, drop unshared ones.
-        var remote = await _client.GetLibrariesAsync(share.HostUrl, share.Token, ct).ConfigureAwait(false);
+        var remote = await _client.GetLibrariesAsync(share, ct).ConfigureAwait(false);
         foreach (var gone in share.Libraries.Where(l => remote.All(r => r.Id != l.RemoteId)).ToList())
         {
             await UnregisterAsync(gone).ConfigureAwait(false);
@@ -206,7 +208,7 @@ public class GuestSyncService
                 continue;
             }
 
-            var items = await _client.GetAllItemsAsync(share.HostUrl, share.Token, lib.RemoteId, ct).ConfigureAwait(false);
+            var items = await _client.GetAllItemsAsync(share, lib.RemoteId, ct).ConfigureAwait(false);
             var writer = new LibraryWriter(LibraryDir(share, lib), item => StreamUrl(share, item));
             if (lib.CollectionType == "tvshows")
             {
@@ -223,7 +225,7 @@ public class GuestSyncService
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    await _client.DownloadImageAsync(share.HostUrl, share.Token, itemId, type, path, ct).ConfigureAwait(false);
+                    await _client.DownloadImageAsync(share, itemId, type, path, ct).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

@@ -13,6 +13,37 @@ public static class RemoteShareHeaders
     public const string Token = "X-RemoteShare-Token";
 }
 
+public static class ServerUrl
+{
+    /// <summary>
+    /// Normalizes a server address. Plain http is fine; when no scheme is given
+    /// (e.g. "192.168.1.50:8096"), http is assumed. Returns null for an empty input.
+    /// </summary>
+    /// <exception cref="FormatException">Not a usable http(s) URL.</exception>
+    public static string? Normalize(string? url)
+    {
+        url = url?.Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(url))
+        {
+            return null;
+        }
+
+        if (!url.Contains("://", StringComparison.Ordinal))
+        {
+            url = "http://" + url;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrEmpty(uri.Host))
+        {
+            throw new FormatException($"\"{url}\" isn't a valid server address. Use e.g. http://192.168.1.50:8096 or https://jellyfin.example.com.");
+        }
+
+        return url;
+    }
+}
+
 public class RemoteLibraryDto
 {
     public Guid Id { get; set; }
@@ -113,7 +144,7 @@ public class ShareCode
             throw new FormatException("Share code is incomplete.");
         }
 
-        parsed.HostUrl = parsed.HostUrl.TrimEnd('/');
+        parsed.HostUrl = ServerUrl.Normalize(parsed.HostUrl)!;
         return parsed;
     }
 }

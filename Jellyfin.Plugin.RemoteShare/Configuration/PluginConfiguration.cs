@@ -79,6 +79,12 @@ public class GuestShare
     /// </summary>
     public string RelayKey { get; set; } = string.Empty;
 
+    /// <summary>
+    /// SHA-256 (hex) of the host's TLS certificate, pinned at join time when the admin chose to trust a
+    /// self-signed certificate. That exact certificate is accepted even though it fails normal validation.
+    /// </summary>
+    public string? PinnedCertificateSha256 { get; set; }
+
     public List<GuestLibrary> Libraries { get; set; } = new();
 
     public DateTime? LastSyncUtc { get; set; }

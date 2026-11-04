@@ -27,9 +27,9 @@
             <h2>Share your libraries</h2>
 
             <div class="inputContainer">
-                <input is="emby-input" type="url" id="rsHostPublicUrl" label="This server's public URL"
-                       placeholder="https://jellyfin.example.com">
-                <div class="fieldDescription">How other servers reach this one. It goes into every share code you create.</div>
+                <input is="emby-input" type="text" id="rsHostPublicUrl" label="This server's public URL"
+                       placeholder="http://203.0.113.7:8096 or https://jellyfin.example.com">
+                <div class="fieldDescription">How other servers reach this one. It goes into every share code you create. HTTP or HTTPS; if you leave off the scheme, http:// is assumed.</div>
             </div>
 
             <div class="rs-card">
@@ -56,6 +56,10 @@
                     <input is="emby-input" type="text" id="rsJoinName" label="Friendly name" placeholder="Mike">
                     <div class="fieldDescription">Added to the shared libraries' names, e.g. "Movies (Mike)", so they don't clash with yours. You can rename each library afterwards.</div>
                 </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" id="rsJoinTrust"><span>Trust this host's certificate</span></label>
+                    <div class="fieldDescription checkboxFieldDescription">Only tick this if the host uses HTTPS with a self-signed certificate. The certificate the host presents now is remembered, and only that exact certificate is accepted later.</div>
+                </div>
                 <button is="emby-button" type="button" class="raised button-submit" id="rsJoin"><span>Add share</span></button>
             </div>
 
@@ -64,7 +68,7 @@
             <!-- ================= Advanced ================= -->
             <h2>Advanced</h2>
             <div class="inputContainer">
-                <input is="emby-input" type="url" id="rsGuestLocalUrl" label="This server's local URL">
+                <input is="emby-input" type="text" id="rsGuestLocalUrl" label="This server's local URL">
                 <div class="fieldDescription">How this server reaches itself for playback of shared libraries. Include the base path if you use one.</div>
             </div>
             <div class="inputContainer">
@@ -221,9 +225,10 @@
 
         page.querySelector('#rsJoin').addEventListener('click', function () {
             Dashboard.showLoadingMsg();
-            call('POST', 'GuestShares', { Code: page.querySelector('#rsJoinCode').value, FriendlyName: page.querySelector('#rsJoinName').value }).then(function () {
+            call('POST', 'GuestShares', { Code: page.querySelector('#rsJoinCode').value, FriendlyName: page.querySelector('#rsJoinName').value, TrustCertificate: page.querySelector('#rsJoinTrust').checked }).then(function () {
                 page.querySelector('#rsJoinCode').value = '';
                 page.querySelector('#rsJoinName').value = '';
+                page.querySelector('#rsJoinTrust').checked = false;
                 Dashboard.alert({ title: 'Remote Share', message: 'Share added. Its libraries appear after the first sync and library scan finish.' });
                 return load();
             }).catch(fail);

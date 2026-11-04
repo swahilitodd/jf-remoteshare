@@ -10,7 +10,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        serviceCollection.AddHttpClient(HostClient.HttpClientName);
+        serviceCollection.AddHttpClient(HostClient.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(HostClient.CreateHandler);
         serviceCollection.AddSingleton<HostService>();
         serviceCollection.AddSingleton<HostClient>();
         serviceCollection.AddSingleton<GuestSyncService>();

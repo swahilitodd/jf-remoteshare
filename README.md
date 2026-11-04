@@ -37,12 +37,12 @@ Both servers need the plugin.
 ## Setup
 
 **On the host**
-1. Set **This server's public URL** to the address the guest server can reach, e.g. `https://jellyfin.example.com`.
+1. Set **This server's public URL** to the address the guest server can reach, e.g. `http://203.0.113.7:8096` or `https://jellyfin.example.com`. HTTPS isn't required; if you omit the scheme, `http://` is assumed.
 2. Under **New share**, enter who it's for, tick libraries, and click **Create share code**.
 3. Send the `rs1.…` code privately. Anyone with it can stream those libraries.
 
 **On the guest**
-1. Under **Add a share**, paste the code and enter a friendly name.
+1. Under **Add a share**, paste the code and enter a friendly name. If the host uses HTTPS with a self-signed certificate, tick **Trust this host's certificate**. The guest then pins that exact certificate.
 2. The first sync and library scan run automatically. Rename or disable individual libraries on the share's card, then click **Save**.
 3. If the server uses a base path or a non-default port, set **This server's local URL** under Advanced (default `http://127.0.0.1:8096`).
 
@@ -51,4 +51,5 @@ Both servers need the plugin.
 - Bandwidth: playback streams the original file from host to guest. The host does no transcoding for guests.
 - The guest library disables trickplay, chapter-image and embedded-title extraction, because those would pull whole files across the internet.
 - Watched state is per server. Watching on the guest doesn't mark anything on the host.
+- Over plain HTTP the share token and the media are sent unencrypted. Prefer HTTPS (e.g. behind a reverse proxy) when the servers talk over the internet.
 - Changing a host's public URL invalidates existing share codes' URL. Guests would need a new code.
