@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Jellyfin.Plugin.RemoteShare.Api;
 using Jellyfin.Plugin.RemoteShare.Configuration;
 using Jellyfin.Plugin.RemoteShare.Host;
@@ -19,6 +20,9 @@ public class GuestSyncService
     private readonly ILogger<GuestSyncService> _logger;
     private readonly SemaphoreSlim _syncLock = new(1, 1);
 
+    /// <summary>What each share's sync is doing right now, for the settings page. Absent = idle.</summary>
+    private readonly ConcurrentDictionary<Guid, string> _status = new();
+
     public GuestSyncService(ILibraryManager libraryManager, HostClient client, ILogger<GuestSyncService> logger)
     {
         _libraryManager = libraryManager;
@@ -27,6 +31,11 @@ public class GuestSyncService
     }
 
     private static Plugin P => Plugin.Instance!;
+
+    /// <summary>Current sync activity for a share, or null when no sync is running or queued.</summary>
+    public string? StatusOf(Guid shareId) => _status.TryGetValue(shareId, out var s) ? s : null;
+
+    private void SetStatus(Guid shareId, string status) => _status[shareId] = status;
 
     public static string DefaultLocalName(string remoteName, string friendlyName) =>
         string.IsNullOrWhiteSpace(friendlyName) ? remoteName : $"{remoteName} ({friendlyName.Trim()})";
@@ -144,7 +153,17 @@ public class GuestSyncService
 
     public async Task SyncAsync(Guid shareId, CancellationToken ct)
     {
-        await _syncLock.WaitAsync(ct).ConfigureAwait(false);
+        _status.TryAdd(shareId, "Waiting for another sync to finish");
+        try
+        {
+            await _syncLock.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _status.TryRemove(shareId, out _);
+            throw;
+        }
+
         try
         {
             var share = P.Configuration.GuestShares.FirstOrDefault(s => s.Id == shareId);
@@ -153,26 +172,55 @@ public class GuestSyncService
                 return;
             }
 
+            _logger.LogInformation("Remote Share sync of {Name} started", share.FriendlyName);
+            SetStatus(shareId, "Starting");
             try
             {
                 await SyncCoreAsync(share, ct).ConfigureAwait(false);
                 Save(share, error: null);
+                _logger.LogInformation("Remote Share sync of {Name} finished", share.FriendlyName);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                _logger.LogWarning("Remote Share sync of {Name} was cancelled", share.FriendlyName);
+                Save(share, "The last sync was cancelled before it finished.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Includes cancellations we didn't ask for (timeouts): those must show up as errors, not vanish.
                 _logger.LogError(ex, "Remote Share sync of {Name} failed", share.FriendlyName);
-                Save(share, ex.Message);
+                Save(share, ex is OperationCanceledException ? "Timed out talking to the host." : ex.Message);
             }
         }
         finally
         {
+            _status.TryRemove(shareId, out _);
             _syncLock.Release();
         }
+    }
+
+    /// <summary>Starts a sync in the background; failures are recorded on the share, never thrown.</summary>
+    public void StartSync(Guid shareId)
+    {
+        _status.TryAdd(shareId, "Waiting for another sync to finish");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await SyncAsync(shareId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Remote Share background sync crashed");
+            }
+        });
     }
 
     private async Task SyncCoreAsync(GuestShare share, CancellationToken ct)
     {
         // Refresh the host's library list: pick up newly shared libraries, drop unshared ones.
+        SetStatus(share.Id, "Contacting host");
         var remote = await _client.GetLibrariesAsync(share, ct).ConfigureAwait(false);
         foreach (var gone in share.Libraries.Where(l => remote.All(r => r.Id != l.RemoteId)).ToList())
         {
@@ -208,7 +256,9 @@ public class GuestSyncService
                 continue;
             }
 
+            SetStatus(share.Id, $"{lib.LocalName}: fetching item list");
             var items = await _client.GetAllItemsAsync(share, lib.RemoteId, ct).ConfigureAwait(false);
+            SetStatus(share.Id, $"{lib.LocalName}: writing files");
             var writer = new LibraryWriter(LibraryDir(share, lib), item => StreamUrl(share, item));
             if (lib.CollectionType == "tvshows")
             {
@@ -220,32 +270,64 @@ public class GuestSyncService
             }
 
             var removed = writer.RemoveStale();
-            foreach (var (itemId, type, path) in writer.PendingImages)
-            {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    await _client.DownloadImageAsync(share, itemId, type, path, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogDebug(ex, "Image {Type} for {Item} failed", type, itemId);
-                }
-            }
-
             lib.ItemCount = items.Count(i => i.Type is "Movie" or "Episode");
-            changed |= writer.Written > 0 || removed > 0 || writer.PendingImages.Count > 0;
+
+            // Register before fetching artwork so the library exists even if artwork is slow or partly fails.
+            SetStatus(share.Id, $"{lib.LocalName}: adding library");
             changed |= await EnsureRegisteredAsync(share, lib).ConfigureAwait(false);
 
+            var imageFailures = await DownloadImagesAsync(share, lib, writer.PendingImages, ct).ConfigureAwait(false);
+            changed |= writer.Written > 0 || removed > 0 || writer.PendingImages.Count > imageFailures;
+
             _logger.LogInformation(
-                "Remote Share {Share}/{Library}: {Count} items, {Written} files written, {Removed} removed",
-                share.FriendlyName, lib.LocalName, lib.ItemCount, writer.Written, removed);
+                "Remote Share {Share}/{Library}: {Count} items, {Written} files written, {Removed} removed, {Images} images fetched, {Failed} images failed",
+                share.FriendlyName, lib.LocalName, lib.ItemCount, writer.Written, removed, writer.PendingImages.Count - imageFailures, imageFailures);
         }
 
         if (changed)
         {
             _libraryManager.QueueLibraryScan();
         }
+    }
+
+    /// <summary>Fetches artwork a few at a time. A failed image is skipped (retried next sync); returns how many failed.</summary>
+    private async Task<int> DownloadImagesAsync(GuestShare share, GuestLibrary lib, List<(Guid ItemId, string ImageType, string Path)> images, CancellationToken ct)
+    {
+        if (images.Count == 0)
+        {
+            return 0;
+        }
+
+        var done = 0;
+        var failed = 0;
+        SetStatus(share.Id, $"{lib.LocalName}: artwork 0 of {images.Count}");
+        var options = new ParallelOptions { MaxDegreeOfParallelism = 6, CancellationToken = ct };
+        await Parallel.ForEachAsync(images, options, async (img, token) =>
+        {
+            try
+            {
+                await _client.DownloadImageAsync(share, img.ItemId, img.ImageType, img.Path, token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!token.IsCancellationRequested)
+            {
+                Interlocked.Increment(ref failed);
+                _logger.LogDebug(ex, "Image {Type} for {Item} failed", img.ImageType, img.ItemId);
+            }
+
+            var n = Interlocked.Increment(ref done);
+            if (n % 20 == 0 || n == images.Count)
+            {
+                SetStatus(share.Id, $"{lib.LocalName}: artwork {n} of {images.Count}");
+            }
+        }).ConfigureAwait(false);
+
+        if (failed > 0)
+        {
+            _logger.LogWarning("Remote Share {Share}/{Library}: {Failed} of {Total} images couldn't be fetched; they'll be retried next sync",
+                share.FriendlyName, lib.LocalName, failed, images.Count);
+        }
+
+        return failed;
     }
 
     /// <summary>Makes sure a local library named LocalName points at this library's folder.</summary>

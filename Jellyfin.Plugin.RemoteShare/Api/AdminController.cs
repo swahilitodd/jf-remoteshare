@@ -51,6 +51,7 @@ public class AdminController : ControllerBase
                 s.HostUrl,
                 s.LastSyncUtc,
                 s.LastSyncError,
+                SyncStatus = _guest.StatusOf(s.Id),
                 s.Libraries,
             }),
         };
@@ -181,7 +182,7 @@ public class AdminController : ControllerBase
         try
         {
             var share = await _guest.JoinAsync(req.Code, req.FriendlyName, req.TrustCertificate, ct).ConfigureAwait(false);
-            _ = Task.Run(() => _guest.SyncAsync(share.Id, CancellationToken.None), CancellationToken.None);
+            _guest.StartSync(share.Id);
             return new { share.Id };
         }
         catch (Exception ex) when (ex is FormatException or HostAccessException or InvalidOperationException or HttpRequestException)
@@ -222,14 +223,14 @@ public class AdminController : ControllerBase
             return BadRequest(ex.Message);
         }
 
-        _ = Task.Run(() => _guest.SyncAsync(id, CancellationToken.None), CancellationToken.None);
+        _guest.StartSync(id);
         return NoContent();
     }
 
     [HttpPost("GuestShares/{id:guid}/Sync")]
     public ActionResult Sync(Guid id)
     {
-        _ = Task.Run(() => _guest.SyncAsync(id, CancellationToken.None), CancellationToken.None);
+        _guest.StartSync(id);
         return Accepted();
     }
 

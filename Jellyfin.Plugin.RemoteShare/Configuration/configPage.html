@@ -146,6 +146,39 @@
             page.querySelector('#rsHostShares').innerHTML = html;
         }
 
+        function syncInfo(s) {
+            return '<p class="rs-muted">From ' + esc(s.HostUrl) + ' · last synced ' + when(s.LastSyncUtc) + '</p>' +
+                (s.SyncStatus ? '<p><strong>Syncing:</strong> ' + esc(s.SyncStatus) + '</p>' : '') +
+                (s.LastSyncError ? '<p class="rs-error">Last sync failed: ' + esc(s.LastSyncError) + '</p>' : '');
+        }
+
+        function libInfo(l) {
+            return esc(l.CollectionType) + (l.Enabled ? ' · ' + l.ItemCount + ' items' : ' · not added');
+        }
+
+        // While any share is syncing, refresh just the status lines (not the inputs, so edits in progress survive).
+        var pollTimer = null;
+        function schedulePoll() {
+            clearTimeout(pollTimer);
+            if (!state || !state.GuestShares.some(function (s) { return s.SyncStatus; })) { return; }
+            pollTimer = setTimeout(function () {
+                if (!document.body.contains(page)) { return; }
+                call('GET', 'State').then(function (fresh) {
+                    fresh.GuestShares.forEach(function (s) {
+                        var card = page.querySelector('[data-guest="' + s.Id + '"]');
+                        if (!card) { return; }
+                        card.querySelector('[data-role=sync]').innerHTML = syncInfo(s);
+                        s.Libraries.forEach(function (l) {
+                            var row = card.querySelector('[data-remote="' + l.RemoteId + '"] [data-role=count]');
+                            if (row) { row.innerHTML = libInfo(l); }
+                        });
+                    });
+                    state.GuestShares = fresh.GuestShares;
+                    schedulePoll();
+                }, function () { schedulePoll(); });
+            }, 3000);
+        }
+
         function renderGuest() {
             var html = state.GuestShares.length ? '' : '<p class="rs-muted">Nothing has been shared with this server yet.</p>';
             state.GuestShares.forEach(function (s) {
@@ -153,8 +186,7 @@
                     '<div class="rs-row"><div class="inputContainer" style="flex:1;margin:0"><input is="emby-input" type="text" data-role="friendly" label="Friendly name" value="' + esc(s.FriendlyName) + '"></div>' +
                     '<button is="emby-button" type="button" class="raised rs-small" data-act="sync">Sync now</button>' +
                     '<button is="emby-button" type="button" class="raised rs-small" data-act="leave">Remove</button></div>' +
-                    '<p class="rs-muted">From ' + esc(s.HostUrl) + ' · last synced ' + when(s.LastSyncUtc) + '</p>' +
-                    (s.LastSyncError ? '<p class="rs-error">' + esc(s.LastSyncError) + '</p>' : '');
+                    '<div data-role="sync">' + syncInfo(s) + '</div>';
                 if (!s.Libraries.length) {
                     html += '<p class="rs-muted">The host isn\'t sharing any libraries with you right now.</p>';
                 }
@@ -162,12 +194,13 @@
                     html += '<div class="rs-lib" data-remote="' + l.RemoteId + '">' +
                         '<label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" data-role="enabled"' + (l.Enabled ? ' checked' : '') + '><span></span></label>' +
                         '<div><input is="emby-input" type="text" data-role="local" label="Library name on this server (shared as &quot;' + esc(l.RemoteName) + '&quot;)" value="' + esc(l.LocalName) + '">' +
-                        '<div class="rs-muted">' + esc(l.CollectionType) + (l.Enabled ? ' · ' + l.ItemCount + ' items' : ' · not added') + '</div></div>' +
+                        '<div class="rs-muted" data-role="count">' + libInfo(l) + '</div></div>' +
                         '</div>';
                 });
                 html += '<button is="emby-button" type="button" class="raised button-submit rs-small" data-act="save">Save</button></div>';
             });
             page.querySelector('#rsGuestShares').innerHTML = html;
+            schedulePoll();
         }
 
         function load() {
@@ -241,9 +274,7 @@
             var id = card.getAttribute('data-guest');
             var act = btn.getAttribute('data-act');
             if (act === 'sync') {
-                call('POST', 'GuestShares/' + id + '/Sync').then(function () {
-                    Dashboard.alert({ title: 'Remote Share', message: 'Sync started. Refresh this page in a moment to see the result.' });
-                }).catch(fail);
+                call('POST', 'GuestShares/' + id + '/Sync').then(load).catch(fail);
                 return;
             }
             if (act === 'leave') {

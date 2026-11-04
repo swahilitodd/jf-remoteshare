@@ -29,6 +29,11 @@ public class HostClient
     /// <summary>Set on a request to accept whatever certificate the host presents and record its hash here.</summary>
     private static readonly HttpRequestOptionsKey<StrongBox<string?>> CaptureCertKey = new("RemoteShare.CaptureCert");
 
+    /// <summary>Item pages are built from the host's database and can be slow on big libraries or network storage.</summary>
+    private static readonly TimeSpan JsonTimeout = TimeSpan.FromMinutes(3);
+
+    private static readonly TimeSpan ImageTimeout = TimeSpan.FromSeconds(60);
+
     private readonly IHttpClientFactory _httpClientFactory;
 
     public HostClient(IHttpClientFactory httpClientFactory)
@@ -78,8 +83,14 @@ public class HostClient
     /// <summary>Downloads an image to <paramref name="destination"/>; returns false if the host has none.</summary>
     public async Task<bool> DownloadImageAsync(GuestShare share, Guid itemId, string imageType, string destination, CancellationToken ct)
     {
+        // HttpClient.Timeout stops applying once headers arrive, so bound the body download too:
+        // a connection that stalls mid-image must not hang the whole sync.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(ImageTimeout);
+        ct = timeout.Token;
+
         using var request = NewRequest(HttpMethod.Get, share, $"RemoteShare/Host/Items/{itemId:N}/Images/{imageType}");
-        using var response = await SendAsync(Client(), request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        using var response = await SendAsync(Client(ImageTimeout), request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return false;
@@ -117,6 +128,14 @@ public class HostClient
         {
             return await client.SendAsync(request, completion, ct).ConfigureAwait(false);
         }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // HttpClient reports its own timeout as a cancellation; make it an ordinary, explained failure.
+            throw new HostAccessException(
+                $"{requested?.GetLeftPart(UriPartial.Authority)} didn't answer within {client.Timeout.TotalSeconds:0} seconds. "
+                + "Check that the host is online and reachable from this server.",
+                ex);
+        }
         catch (HttpRequestException ex) when (ex.InnerException is AuthenticationException auth)
         {
             var requestedHost = requested?.GetLeftPart(UriPartial.Authority);
@@ -151,10 +170,10 @@ public class HostClient
         return client;
     }
 
-    private HttpClient Client()
+    private HttpClient Client(TimeSpan timeout)
     {
         var client = _httpClientFactory.CreateClient(HttpClientName);
-        client.Timeout = TimeSpan.FromSeconds(60);
+        client.Timeout = timeout;
         return client;
     }
 
@@ -185,7 +204,7 @@ public class HostClient
     private async Task<T> GetJsonAsync<T>(HttpRequestMessage request, CancellationToken ct)
     {
         using var _ = request;
-        using var response = await SendAsync(Client(), request, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
+        using var response = await SendAsync(Client(JsonTimeout), request, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
         EnsureOk(response);
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Host returned an empty response.");
