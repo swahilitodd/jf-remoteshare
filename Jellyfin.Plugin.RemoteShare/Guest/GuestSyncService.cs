@@ -41,7 +41,7 @@ public class GuestSyncService
         string.IsNullOrWhiteSpace(friendlyName) ? remoteName : $"{remoteName} ({friendlyName.Trim()})";
 
     /// <summary>Validates a share code against the host and saves the share. Does not sync.</summary>
-    public async Task<GuestShare> JoinAsync(string code, string friendlyName, bool trustCertificate, CancellationToken ct)
+    public async Task<GuestShare> JoinAsync(string code, string friendlyName, bool trustCertificate, bool hideDuplicates, CancellationToken ct)
     {
         var parsed = ShareCode.Decode(code);
         if (P.Configuration.GuestShares.Any(s => s.HostUrl == parsed.HostUrl && s.Token == parsed.Token))
@@ -55,6 +55,7 @@ public class GuestSyncService
             HostUrl = parsed.HostUrl,
             Token = parsed.Token,
             RelayKey = HostService.NewSecret(),
+            HideDuplicates = hideDuplicates,
         };
         var libraries = trustCertificate
             ? await _client.GetLibrariesTrustingCertificateAsync(share, ct).ConfigureAwait(false)
@@ -68,7 +69,7 @@ public class GuestSyncService
     }
 
     /// <summary>Applies friendly-name / per-library edits. Local library renames happen on the next sync.</summary>
-    public void Edit(Guid shareId, string? friendlyName, IEnumerable<(Guid RemoteId, string? LocalName, bool? Enabled)> libraries)
+    public void Edit(Guid shareId, string? friendlyName, bool? hideDuplicates, IEnumerable<(Guid RemoteId, string? LocalName, bool? Enabled)> libraries)
     {
         var c = P.Configuration;
         var share = c.GuestShares.FirstOrDefault(s => s.Id == shareId) ?? throw new KeyNotFoundException();
@@ -107,6 +108,7 @@ public class GuestSyncService
         P.Update(_ =>
         {
             share.FriendlyName = newFriendly;
+            share.HideDuplicates = hideDuplicates ?? share.HideDuplicates;
             foreach (var lib in share.Libraries)
             {
                 (lib.LocalName, lib.Enabled) = planned[lib.RemoteId];
@@ -245,6 +247,13 @@ public class GuestSyncService
 
         EnsureUniqueNames(share, P.Configuration.GuestShares.Where(s => s.Id != share.Id));
 
+        DuplicateFilter? duplicates = null;
+        if (share.HideDuplicates && share.Libraries.Any(l => l.Enabled))
+        {
+            SetStatus(share.Id, "Checking which titles this server already has");
+            duplicates = DuplicateFilter.Build(_libraryManager, P.GuestStorageRoot);
+        }
+
         var changed = false;
         foreach (var lib in share.Libraries)
         {
@@ -253,11 +262,18 @@ public class GuestSyncService
                 changed |= await UnregisterAsync(lib).ConfigureAwait(false);
                 DeleteDir(LibraryDir(share, lib));
                 lib.ItemCount = 0;
+                lib.HiddenCount = 0;
                 continue;
             }
 
             SetStatus(share.Id, $"{lib.LocalName}: fetching item list");
             var items = await _client.GetAllItemsAsync(share, lib.RemoteId, ct).ConfigureAwait(false);
+            lib.HiddenCount = 0;
+            if (duplicates is not null)
+            {
+                (items, lib.HiddenCount) = duplicates.Apply(items);
+            }
+
             SetStatus(share.Id, $"{lib.LocalName}: writing files");
             var writer = new LibraryWriter(LibraryDir(share, lib), item => StreamUrl(share, item));
             if (lib.CollectionType == "tvshows")
@@ -280,8 +296,8 @@ public class GuestSyncService
             changed |= writer.Written > 0 || removed > 0 || writer.PendingImages.Count > imageFailures;
 
             _logger.LogInformation(
-                "Remote Share {Share}/{Library}: {Count} items, {Written} files written, {Removed} removed, {Images} images fetched, {Failed} images failed",
-                share.FriendlyName, lib.LocalName, lib.ItemCount, writer.Written, removed, writer.PendingImages.Count - imageFailures, imageFailures);
+                "Remote Share {Share}/{Library}: {Count} items ({Hidden} hidden as duplicates), {Written} files written, {Removed} removed, {Images} images fetched, {Failed} images failed",
+                share.FriendlyName, lib.LocalName, lib.ItemCount, lib.HiddenCount, writer.Written, removed, writer.PendingImages.Count - imageFailures, imageFailures);
         }
 
         if (changed)

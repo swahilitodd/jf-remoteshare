@@ -60,6 +60,10 @@
                     <label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" id="rsJoinTrust"><span>Trust this host's certificate</span></label>
                     <div class="fieldDescription checkboxFieldDescription">Only tick this if the host uses HTTPS with a self-signed certificate. The certificate the host presents now is remembered, and only that exact certificate is accepted later.</div>
                 </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" id="rsJoinHideDupes" checked><span>Hide titles this server already has</span></label>
+                    <div class="fieldDescription checkboxFieldDescription">Movies and episodes already in your own libraries (matched by IMDb, TMDb or TVDb id) are left out, so they don't appear twice. For shows, only the episodes you're missing are added.</div>
+                </div>
                 <button is="emby-button" type="button" class="raised button-submit" id="rsJoin"><span>Add share</span></button>
             </div>
 
@@ -153,7 +157,8 @@
         }
 
         function libInfo(l) {
-            return esc(l.CollectionType) + (l.Enabled ? ' · ' + l.ItemCount + ' items' : ' · not added');
+            if (!l.Enabled) { return esc(l.CollectionType) + ' · not added'; }
+            return esc(l.CollectionType) + ' · ' + l.ItemCount + ' items' + (l.HiddenCount ? ' · ' + l.HiddenCount + ' hidden (already on this server)' : '');
         }
 
         // While any share is syncing, refresh just the status lines (not the inputs, so edits in progress survive).
@@ -197,6 +202,8 @@
                         '<div class="rs-muted" data-role="count">' + libInfo(l) + '</div></div>' +
                         '</div>';
                 });
+                html += '<label class="emby-checkbox-label" style="display:block;margin:.6em 0"><input type="checkbox" is="emby-checkbox" data-role="dupes"' + (s.HideDuplicates ? ' checked' : '') +
+                    '><span>Hide titles this server already has</span></label>';
                 html += '<button is="emby-button" type="button" class="raised button-submit rs-small" data-act="save">Save</button></div>';
             });
             page.querySelector('#rsGuestShares').innerHTML = html;
@@ -258,7 +265,7 @@
 
         page.querySelector('#rsJoin').addEventListener('click', function () {
             Dashboard.showLoadingMsg();
-            call('POST', 'GuestShares', { Code: page.querySelector('#rsJoinCode').value, FriendlyName: page.querySelector('#rsJoinName').value, TrustCertificate: page.querySelector('#rsJoinTrust').checked }).then(function () {
+            call('POST', 'GuestShares', { Code: page.querySelector('#rsJoinCode').value, FriendlyName: page.querySelector('#rsJoinName').value, TrustCertificate: page.querySelector('#rsJoinTrust').checked, HideDuplicates: page.querySelector('#rsJoinHideDupes').checked }).then(function () {
                 page.querySelector('#rsJoinCode').value = '';
                 page.querySelector('#rsJoinName').value = '';
                 page.querySelector('#rsJoinTrust').checked = false;
@@ -285,6 +292,7 @@
             }
             var body = {
                 FriendlyName: card.querySelector('[data-role=friendly]').value,
+                HideDuplicates: card.querySelector('[data-role=dupes]').checked,
                 Libraries: Array.prototype.map.call(card.querySelectorAll('[data-remote]'), function (row) {
                     return {
                         RemoteId: row.getAttribute('data-remote'),

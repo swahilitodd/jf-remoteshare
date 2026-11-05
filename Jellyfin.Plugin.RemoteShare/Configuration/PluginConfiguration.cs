@@ -87,6 +87,12 @@ public class GuestShare
 
     public List<GuestLibrary> Libraries { get; set; } = new();
 
+    /// <summary>
+    /// Leave out movies and episodes this server already has in its own libraries
+    /// (matched by IMDb / TMDb / TVDb id), so they don't show up twice.
+    /// </summary>
+    public bool HideDuplicates { get; set; } = true;
+
     public DateTime? LastSyncUtc { get; set; }
 
     public string? LastSyncError { get; set; }
@@ -115,4 +121,7 @@ public class GuestLibrary
     public bool Enabled { get; set; } = true;
 
     public int ItemCount { get; set; }
+
+    /// <summary>Movies/episodes left out because this server already has them.</summary>
+    public int HiddenCount { get; set; }
 }

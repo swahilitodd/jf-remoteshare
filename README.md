@@ -50,6 +50,7 @@ Both servers need the plugin.
 
 - Bandwidth: playback streams the original file from host to guest. The host does no transcoding for guests.
 - The guest library disables trickplay, chapter-image and embedded-title extraction, because those would pull whole files across the internet.
+- **Duplicates:** with *Hide titles this server already has* ticked (the default), movies and episodes already in your own libraries are left out of the shared library. They're matched by IMDb, TMDb or TVDb id. For shows, only the episodes you're missing are added. Matching only works when both servers have identified the media; a title without those ids can still appear twice. If you delete your own copy, the shared one comes back on the next sync. Only your own libraries count: two shares offering the same title both show it.
 - Watched state is per server. Watching on the guest doesn't mark anything on the host.
 - Over plain HTTP the share token and the media are sent unencrypted. Prefer HTTPS (e.g. behind a reverse proxy) when the servers talk over the internet.
 - Changing a host's public URL invalidates existing share codes' URL. Guests would need a new code.

@@ -51,6 +51,7 @@ public class AdminController : ControllerBase
                 s.HostUrl,
                 s.LastSyncUtc,
                 s.LastSyncError,
+                s.HideDuplicates,
                 SyncStatus = _guest.StatusOf(s.Id),
                 s.Libraries,
             }),
@@ -174,6 +175,8 @@ public class AdminController : ControllerBase
         public string FriendlyName { get; set; } = string.Empty;
 
         public bool TrustCertificate { get; set; }
+
+        public bool HideDuplicates { get; set; } = true;
     }
 
     [HttpPost("GuestShares")]
@@ -181,7 +184,7 @@ public class AdminController : ControllerBase
     {
         try
         {
-            var share = await _guest.JoinAsync(req.Code, req.FriendlyName, req.TrustCertificate, ct).ConfigureAwait(false);
+            var share = await _guest.JoinAsync(req.Code, req.FriendlyName, req.TrustCertificate, req.HideDuplicates, ct).ConfigureAwait(false);
             _guest.StartSync(share.Id);
             return new { share.Id };
         }
@@ -194,6 +197,8 @@ public class AdminController : ControllerBase
     public class GuestShareEdit
     {
         public string? FriendlyName { get; set; }
+
+        public bool? HideDuplicates { get; set; }
 
         public List<GuestLibraryEdit> Libraries { get; set; } = new();
     }
@@ -212,7 +217,7 @@ public class AdminController : ControllerBase
     {
         try
         {
-            _guest.Edit(id, req.FriendlyName, req.Libraries.Select(l => (l.RemoteId, l.LocalName, l.Enabled)));
+            _guest.Edit(id, req.FriendlyName, req.HideDuplicates, req.Libraries.Select(l => (l.RemoteId, l.LocalName, l.Enabled)));
         }
         catch (KeyNotFoundException)
         {
