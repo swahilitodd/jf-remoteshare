@@ -3,6 +3,22 @@
     "guid": "9a871b46-6581-4f0c-a1cd-54da8de66932",
     "versions": [
       {
+        "version": "0.2.1.12",
+        "changelog": "- Version jump past the 0.2.0.0 test build, so servers that have it installed see this as an update.\n- Duplicate hiding is now a per-share setting (on by default) and matches by IMDb/TMDb/TVDb id.\n- Ember EDL sidecars now travel with shared titles (Movie.edl beside Movie.strm on the guest).\n- Published through a Jellyfin plugin repository.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/swahilitodd/jf-remoteshare/releases/download/v0.2.1/remote-share_0.2.1.12_jellyfin-12.zip",
+        "checksum": "296f2e01fd1642e55138e8a9015e63eb",
+        "timestamp": "2026-11-20T23:10:15Z"
+      },
+      {
+        "version": "0.2.1.11",
+        "changelog": "- Version jump past the 0.2.0.0 test build, so servers that have it installed see this as an update.\n- Duplicate hiding is now a per-share setting (on by default) and matches by IMDb/TMDb/TVDb id.\n- Ember EDL sidecars now travel with shared titles (Movie.edl beside Movie.strm on the guest).\n- Published through a Jellyfin plugin repository.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/swahilitodd/jf-remoteshare/releases/download/v0.2.1/remote-share_0.2.1.11_jellyfin-10.11.zip",
+        "checksum": "4f53c4dc3eb167afd84990272818ded2",
+        "timestamp": "2026-11-20T23:10:15Z"
+      },
+      {
         "version": "0.1.1.12",
         "changelog": "- Ember EDL sidecars now travel with shared titles (Movie.edl beside Movie.strm on the guest).\n- Published through a Jellyfin plugin repository.",
         "targetAbi": "12.0.0.0",
