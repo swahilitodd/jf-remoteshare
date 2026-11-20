@@ -101,6 +101,12 @@ public class RemoteItemDto
     public string[] Images { get; set; } = Array.Empty<string>();
 
     public DateTime DateModified { get; set; }
+
+    /// <summary>
+    /// Text of the host's EDL sidecar (Movie.mkv -> Movie.edl), if there is one. Guests write it
+    /// next to the .strm so the Ember EDL Sidecars plugin serves it there too. Null when absent.
+    /// </summary>
+    public string? Edl { get; set; }
 }
 
 public class RemoteItemPageDto

@@ -47,6 +47,7 @@ public class LibraryWriter
 
             WriteIfChanged(stem + ".strm", _streamUrl(movie));
             WriteIfChanged(stem + ".nfo", Nfo("movie", movie, extra: null));
+            WriteEdl(stem, movie);
             QueueImages(movie, img => Path.Combine(dir, ImageFileNames[img] + ".jpg"));
         }
     }
@@ -106,6 +107,8 @@ public class LibraryWriter
                 }
             }));
 
+            WriteEdl(stem, ep);
+
             if (ep.Images.Contains("Primary"))
             {
                 QueueImage(ep.Id, "Primary", stem + "-thumb.jpg");
@@ -141,6 +144,18 @@ public class LibraryWriter
         }
 
         return removed;
+    }
+
+    /// <summary>
+    /// Writes the host's EDL beside the .strm (Movie.strm -> Movie.edl), where the Ember EDL
+    /// Sidecars plugin looks for it. If the host no longer has one, RemoveStale deletes it.
+    /// </summary>
+    private void WriteEdl(string stem, RemoteItemDto item)
+    {
+        if (!string.IsNullOrEmpty(item.Edl))
+        {
+            WriteIfChanged(stem + ".edl", item.Edl);
+        }
     }
 
     private void QueueImages(RemoteItemDto item, Func<string, string> pathFor)

@@ -185,7 +185,37 @@ public class HostService
             return null;
         }
 
+        if (dto.Type != "Series")
+        {
+            dto.Edl = ReadEdl(item.Path);
+        }
+
         return dto;
+    }
+
+    /// <summary>Largest EDL sidecar sent to guests; real ones are a few KB.</summary>
+    private const long MaxEdlBytes = 256 * 1024;
+
+    /// <summary>
+    /// Reads the EDL sidecar beside a media file (same folder, same name, ".edl"), the file
+    /// the Ember EDL Sidecars plugin serves. Returns null if there isn't a usable one.
+    /// </summary>
+    private static string? ReadEdl(string mediaPath)
+    {
+        try
+        {
+            var edl = new FileInfo(Path.ChangeExtension(mediaPath, ".edl"));
+            if (!edl.Exists || edl.Length == 0 || edl.Length > MaxEdlBytes)
+            {
+                return null;
+            }
+
+            return File.ReadAllText(edl.FullName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private static string? ContainerOf(BaseItem item)
