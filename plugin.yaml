@@ -1,0 +1,27 @@
+# Source of truth for releases and the Jellyfin plugin repository (manifest.json).
+# To release: bump `version`, add a changelog line, commit and push to main.
+name: "Remote Share"
+guid: "9a871b46-6581-4f0c-a1cd-54da8de66932"
+version: "0.1.1"
+owner: "swahilitodd"
+category: "General"
+overview: "Server-to-server library sharing"
+description: >
+  Share libraries with other Jellyfin servers, and add libraries shared with you to your own.
+  Shared titles carry their Ember EDL sidecars, so skip/mute filters work on the guest too.
+changelog: |-
+  - Ember EDL sidecars now travel with shared titles (Movie.edl beside Movie.strm on the guest).
+  - Published through a Jellyfin plugin repository.
+
+# One build per Jellyfin line. The 4th version digit identifies the variant
+# (0.1.1.11 = Jellyfin 10.11, 0.1.1.12 = Jellyfin 12) so each server picks the right DLL:
+# 10.11 servers can't see the 12 build (targetAbi too high), and 12 servers prefer .12.
+variants:
+  - jellyfin: "10.11"
+    framework: "net9.0"
+    targetAbi: "10.11.0.0"
+    suffix: "11"
+  - jellyfin: "12"
+    framework: "net10.0"
+    targetAbi: "12.0.0.0"
+    suffix: "12"

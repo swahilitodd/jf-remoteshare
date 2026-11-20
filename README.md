@@ -23,7 +23,17 @@ Supported library types: **Movies** and **Shows**. Discs (BDMV/VIDEO_TS) and `.s
 
 ## Install
 
-Run `./build.sh` (needs the .NET 10 SDK). It produces:
+**From the plugin repository** (needs this GitHub repo to be public): in Jellyfin go to **Dashboard → Plugins → Repositories → +** and add
+
+```
+https://raw.githubusercontent.com/swahilitodd/jf-remoteshare/main/manifest.json
+```
+
+Then install **Remote Share** from the Catalog and restart. Each server gets the build for its Jellyfin version, and new releases show up as updates.
+
+**Releasing:** bump `version` in `plugin.yaml`, add a changelog line, and push to `main`. The *Release* workflow builds both variants (`<version>.11` for Jellyfin 10.11, `<version>.12` for 12), publishes a GitHub Release and updates `manifest.json`. Every push also runs the *Build* workflow, a compile check whose zips are attached to the run under **Artifacts**.
+
+**By hand:** run `./build.sh` (needs the .NET 10 SDK). It produces:
 
 | Zip | Jellyfin |
 | --- | --- |

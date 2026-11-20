@@ -1,0 +1,58 @@
+name: Release
+
+# Release = bump `version` in plugin.yaml and push to main. Builds both variants, publishes
+# a GitHub Release with the zips, and adds them to manifest.json (the Jellyfin repository).
+on:
+  push:
+    branches: [main]
+    paths: [plugin.yaml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+      - name: Build
+        run: |
+          pip install --quiet pyyaml
+          python3 .github/scripts/build_release.py
+      - name: Create / update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(python3 -c "import yaml;print(yaml.safe_load(open('plugin.yaml'))['version'])")"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip --clobber
+          else
+            gh release create "$TAG" dist/*.zip --target "$GITHUB_SHA" --title "Remote Share $TAG" \
+              --notes "Install from the Jellyfin plugin repository: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/manifest.json"
+          fi
+      - name: Update manifest.json
+        run: |
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 -c "import json;[print(r['version'],r['targetAbi'],r['zip'],r['md5']) for r in json.load(open('dist/results.json'))]" > /tmp/rows
+          while read -r VERSION ABI ZIP MD5; do
+            python3 .github/scripts/update_manifest.py plugin.yaml manifest.json \
+              "$VERSION" "$ABI" "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ZIP}" "$MD5" "$NOW"
+          done < /tmp/rows
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git diff --cached --quiet || git commit -m "Publish ${TAG} to plugin repository manifest"
+          git push origin main

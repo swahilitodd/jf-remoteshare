@@ -1,0 +1,26 @@
+name: Build
+
+# Compile check on every push and pull request. The built zips are attached to the run
+# (Summary -> Artifacts) so a branch can be installed and tested before it's released.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+      - name: Build both Jellyfin variants
+        run: |
+          pip install --quiet pyyaml
+          python3 .github/scripts/build_release.py --strict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-share-zips
+          path: dist/*.zip
